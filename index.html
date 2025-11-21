@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>VRM Samba with YouTube</title>
+    <title>VRM Samba Perfect</title>
     <style>
-        /* --- 画面固定設定 --- */
+        /* --- 画面全体設定 --- */
         html, body {
             margin: 0; padding: 0; width: 100vw; height: 100dvh;
             position: fixed; inset: 0;
@@ -59,21 +59,17 @@
         .active-dance { background: #ff3296 !important; transform: scale(1.1); box-shadow: 0 0 15px #ff3296; }
         #btn-jump:active { background: #32c832; transform: scale(0.9); }
 
-        /* --- YouTubeプレーヤー (右下に小さく表示) --- */
+        /* YouTube枠 (最初は非表示) */
         #youtube-container {
             position: fixed;
-            bottom: 120px; /* ボタンの少し上 */
-            right: 20px;
-            width: 200px; height: 113px; /* 16:9 */
+            bottom: 110px; right: 20px;
+            width: 200px; height: 113px;
             z-index: 900;
             border: 2px solid white; border-radius: 10px;
-            overflow: hidden;
+            overflow: hidden; background: black;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            background: black;
-            /* 最初は隠しておく（透明にしておく） */
             opacity: 0; pointer-events: none; transition: opacity 0.5s;
         }
-        /* 再生中は表示 */
         #youtube-container.show { opacity: 1; pointer-events: auto; }
 
     </style>
@@ -89,9 +85,7 @@
 
     <div id="status-board">System Ready</div>
 
-    <div id="youtube-container">
-        <div id="player"></div>
-    </div>
+    <div id="youtube-container"><div id="player"></div></div>
 
     <div id="controls">
         <div class="btn-group">
@@ -104,6 +98,48 @@
         </div>
     </div>
 
+    <script>
+        var ytPlayer = null;
+        
+        // 1. YouTube APIのコードを非同期で読み込む
+        var tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        var firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        // 2. 準備完了時に呼ばれる関数 (グローバル)
+        function onYouTubeIframeAPIReady() {
+            // エラー対策: ホストとオリジンを明示
+            var origin = window.location.origin;
+            ytPlayer = new YT.Player('player', {
+                height: '100%', width: '100%',
+                videoId: 'cyxd78Hc2SM',
+                host: 'https://www.youtube.com', // 明示
+                playerVars: {
+                    'playsinline': 1, 'controls': 0, 'loop': 1, 'playlist': 'cyxd78Hc2SM',
+                    'origin': origin // 明示
+                },
+                events: {
+                    'onReady': function(e) { console.log("YT Ready"); }
+                }
+            });
+        }
+
+        // 3. モジュールから呼び出すための操作関数 (グローバル)
+        window.controlVideoGlobal = function(play) {
+            var container = document.getElementById('youtube-container');
+            if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+                if (play) {
+                    ytPlayer.playVideo();
+                    container.classList.add('show');
+                } else {
+                    ytPlayer.pauseVideo();
+                    container.classList.remove('show');
+                }
+            }
+        };
+    </script>
+
     <script type="importmap">
         {
             "imports": {
@@ -113,8 +149,6 @@
             }
         }
     </script>
-
-    <script src="https://www.youtube.com/iframe_api"></script>
 
     <script type="module">
         import * as THREE from 'three';
@@ -138,56 +172,20 @@
 
         function log(msg) { document.getElementById('status-board').innerText = msg; }
 
-        // --- YouTube制御 ---
-        let ytPlayer;
-        // API準備完了時に呼ばれる関数（window直下に置く必要あり）
-        window.onYouTubeIframeAPIReady = function() {
-            ytPlayer = new YT.Player('player', {
-                height: '100%', width: '100%',
-                videoId: 'cyxd78Hc2SM', // 指定の動画ID
-                playerVars: {
-                    'playsinline': 1, // スマホで全画面化防止
-                    'controls': 0,    // コントロールバー非表示
-                    'loop': 1,        // ループ設定
-                    'playlist': 'cyxd78Hc2SM' // ループにはプレイリスト指定が必要
-                },
-                events: {
-                    'onReady': (event) => log("YouTube Ready")
-                }
-            });
-        };
-
-        // 動画再生・停止関数
-        function controlVideo(play) {
-            const container = document.getElementById('youtube-container');
-            if (!ytPlayer || !ytPlayer.playVideo) return;
-
-            if (play) {
-                ytPlayer.playVideo();
-                container.classList.add('show');
-            } else {
-                ytPlayer.pauseVideo();
-                container.classList.remove('show');
-            }
-        }
-
         // --- モード切替 ---
         window.toggleMode = (mode) => {
             const btnWalk = document.getElementById('btn-walk');
             const btnDance = document.getElementById('btn-dance');
 
             if (currentMode === mode) {
-                // 停止 (Idleへ)
+                // 停止
                 currentMode = 'idle';
                 btnWalk.classList.remove('active-walk');
                 btnDance.classList.remove('active-dance');
                 if (sambaAction) sambaAction.stop();
-                
-                // 動画停止
-                controlVideo(false);
-                
+                window.controlVideoGlobal(false); // 動画停止
             } else {
-                // モード変更
+                // 開始
                 currentMode = mode;
                 btnWalk.classList.toggle('active-walk', mode === 'walk');
                 btnDance.classList.toggle('active-dance', mode === 'dance');
@@ -197,12 +195,10 @@
                         sambaAction.reset();
                         sambaAction.play();
                     }
-                    // 動画再生
-                    controlVideo(true);
+                    window.controlVideoGlobal(true); // 動画再生
                 } else {
                     if (sambaAction) sambaAction.stop();
-                    // 動画停止
-                    controlVideo(false);
+                    window.controlVideoGlobal(false); // 動画停止
                 }
             }
         };
@@ -260,7 +256,6 @@
                 scene.remove(currentVrm.scene);
                 VRMUtils.deepDispose(currentVrm.scene);
             }
-
             const loader = new GLTFLoader();
             loader.register((parser) => new VRMLoaderPlugin(parser));
 
@@ -305,7 +300,7 @@
                     }
                 });
                 sambaAction = mixer.clipAction(new THREE.AnimationClip('samba', clip.duration, tracks));
-                log("Ready! Press Buttons.");
+                log("Ready! Tap buttons.");
             });
         }
 
