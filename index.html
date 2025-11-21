@@ -3,37 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>VRM Final Perfect</title>
+    <title>VRM Final Fixed</title>
     <style>
-        /* --- 画面全体設定 --- */
+        /* --- 画面全体を完全にロックする設定 --- */
         html, body {
             margin: 0; padding: 0;
-            width: 100vw; height: 100dvh;
+            position: fixed; /* 画面に固定 */
+            inset: 0;        /* 上下左右0px */
+            width: 100%; height: 100%;
             overflow: hidden;
             background-color: #333;
-            touch-action: none;
-            position: fixed;
+            touch-action: none; /* スクロール・ズーム無効 */
+            -webkit-user-select: none; user-select: none; /* 長押し選択無効 */
         }
-        canvas { display: block; width: 100%; height: 100%; }
+        
+        canvas {
+            display: block;
+            width: 100%; height: 100%;
+            outline: none;
+        }
 
-        /* --- UI (位置ズレ防止のFixed配置) --- */
+        /* --- UIレイアウト --- */
         #file-ui {
-            position: fixed;
-            top: max(20px, env(safe-area-inset-top));
+            position: fixed; 
+            top: max(20px, env(safe-area-inset-top)); 
             left: max(20px, env(safe-area-inset-left));
             z-index: 1000;
         }
         #btn-open {
-            background: #444; color: white; padding: 10px 20px;
+            background: #444; color: white; padding: 12px 20px;
             border: 2px solid white; border-radius: 30px;
             cursor: pointer; font-weight: bold; font-size: 14px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+            white-space: nowrap;
         }
         #file-input { display: none; }
 
         #status-board { 
             position: fixed;
-            top: calc(max(20px, env(safe-area-inset-top)) + 50px);
+            top: calc(max(20px, env(safe-area-inset-top)) + 60px);
             left: max(20px, env(safe-area-inset-left));
             color: #00ff00; background: rgba(0,0,0,0.6); padding: 8px; 
             pointer-events: none; border-radius: 5px; font-family: monospace; font-size: 12px;
@@ -41,22 +49,26 @@
 
         #controls {
             position: fixed;
-            bottom: max(20px, env(safe-area-inset-bottom));
+            bottom: max(30px, env(safe-area-inset-bottom));
             left: max(20px, env(safe-area-inset-left));
             right: max(20px, env(safe-area-inset-right));
-            display: flex; justify-content: space-between; pointer-events: none;
+            display: flex; justify-content: space-between; 
+            pointer-events: none;
         }
+
         .btn-group { pointer-events: auto; display: flex; gap: 15px; }
         
         .control-btn {
-            width: 60px; height: 60px; border-radius: 50%;
+            width: 65px; height: 65px; border-radius: 50%;
             border: 3px solid white; color: white;
-            font-weight: bold; font-size: 12px; cursor: pointer;
+            font-weight: bold; font-size: 13px; cursor: pointer;
             display: flex; align-items: center; justify-content: center;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            user-select: none; -webkit-user-select: none;
+            transition: transform 0.1s, opacity 0.1s;
+            /* スマホでのタップ反応を良くする */
+            touch-action: manipulation;
         }
-        .control-btn:active { transform: scale(0.9); opacity: 0.8; }
+        .control-btn:active { transform: scale(0.9); opacity: 0.7; }
 
         #btn-walk { background: rgba(0, 150, 255, 0.8); }
         #btn-dance { background: rgba(255, 50, 150, 0.8); }
@@ -72,7 +84,7 @@
         </label>
     </div>
 
-    <div id="status-board">System Ready</div>
+    <div id="status-board">Loading System...</div>
 
     <div id="controls">
         <div class="btn-group">
@@ -123,7 +135,7 @@
 
         function log(msg) { document.getElementById('status-board').innerText = msg; }
 
-        // 操作イベント
+        // 操作イベントハンドラ
         window.startWalk = (e) => { if(e.cancelable) e.preventDefault(); input.walk = true; };
         window.stopWalk = (e) => { if(e.cancelable) e.preventDefault(); input.walk = false; };
         window.startDance = (e) => { if(e.cancelable) e.preventDefault(); input.dance = true; };
@@ -155,6 +167,7 @@
 
             camera.position.set(0, 1.4, -3.5);
 
+            // ファイル読み込み
             document.getElementById('file-input').addEventListener('change', (e) => {
                 const file = e.target.files[0];
                 if (file) loadVRM(URL.createObjectURL(file));
@@ -166,12 +179,12 @@
                 renderer.setSize(window.innerWidth, window.innerHeight);
             });
 
-            // カメラリセット
+            // ダブルタップでカメラリセット
             document.addEventListener('dblclick', () => {
                 camera.position.set(player.pos.x, player.pos.y + 1.4, player.pos.z - 3.5);
-                camera.lookAt(player.pos.x, player.pos.y + 1.2, player.pos.z);
             });
 
+            // 初期モデルロード
             loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
             
             animate();
@@ -195,8 +208,8 @@
                 
                 mixer = new THREE.AnimationMixer(currentVrm.scene);
                 
-                // ★重要: ロード直後にTポーズを強制適用
-                resetPose();
+                // ロード直後に腕を「強制的に」下ろす
+                applyStandPose();
 
                 log("VRM Loaded. Loading Dance...");
                 loadSamba();
@@ -207,16 +220,14 @@
 
         function loadSamba() {
             const url = 'https://threejs.org/examples/models/fbx/Samba Dancing.fbx';
-            
             new FBXLoader().load(url, (asset) => {
                 const clip = asset.animations[0];
                 const tracks = [];
-                
                 const map = {
                     'mixamorigHips': 'hips', 'mixamorigSpine': 'spine', 'mixamorigSpine1': 'chest', 'mixamorigSpine2': 'upperChest',
                     'mixamorigNeck': 'neck', 'mixamorigHead': 'head',
                     'mixamorigLeftShoulder': 'leftShoulder', 'mixamorigLeftArm': 'leftUpperArm', 'mixamorigLeftForeArm': 'leftLowerArm', 
-                    // Handマッピング削除（手首ねじれ防止）
+                    // Hand除外（手首ねじれ防止）
                     'mixamorigRightShoulder': 'rightShoulder', 'mixamorigRightArm': 'rightUpperArm', 'mixamorigRightForeArm': 'rightLowerArm', 
                     'mixamorigLeftUpLeg': 'leftUpperLeg', 'mixamorigLeftLeg': 'leftLowerLeg', 'mixamorigLeftFoot': 'leftFoot', 
                     'mixamorigRightUpLeg': 'rightUpperLeg', 'mixamorigRightLeg': 'rightLowerLeg', 'mixamorigRightFoot': 'rightFoot'
@@ -226,11 +237,8 @@
                     const [bone, prop] = track.name.split('.');
                     const simpleBone = bone.replace('mixamorig', 'mixamorig');
                     const vrmBone = map[simpleBone];
-
                     if (vrmBone) {
-                        if (prop === 'scale') return;
-                        if (prop === 'position') return; 
-
+                        if (prop === 'scale' || prop === 'position') return; 
                         const vrmNode = currentVrm.humanoid.getNormalizedBoneNode(vrmBone);
                         if (vrmNode) {
                             const t = track.clone();
@@ -239,15 +247,13 @@
                         }
                     }
                 });
-
-                const newClip = new THREE.AnimationClip('samba', clip.duration, tracks);
-                sambaAction = mixer.clipAction(newClip);
-                log("Ready! Tap buttons.");
+                sambaAction = mixer.clipAction(new THREE.AnimationClip('samba', clip.duration, tracks));
+                log("Ready! Press Buttons.");
             });
         }
 
-        // ★修正: Tポーズ(0,0,0)にリセットする関数
-        function resetPose() {
+        // ★重要: 腕を物理的に下ろす（待機ポーズ）
+        function applyStandPose() {
             if (!currentVrm) return;
             const h = currentVrm.humanoid;
             const lArm = h.getNormalizedBoneNode('leftUpperArm');
@@ -255,9 +261,12 @@
             const lLeg = h.getNormalizedBoneNode('leftUpperLeg');
             const rLeg = h.getNormalizedBoneNode('rightUpperLeg');
 
-            // すべて 0,0,0 (T-Pose) にする
-            if(lArm) lArm.rotation.set(0, 0, 0);
-            if(rArm) rArm.rotation.set(0, 0, 0);
+            // 0ではなく、Z軸回転で約80度(1.4rad)下げる
+            // これでバンザイ状態から下に降ります
+            if(lArm) lArm.rotation.set(0, 0, 1.4);
+            if(rArm) rArm.rotation.set(0, 0, -1.4);
+            
+            // 足はまっすぐ
             if(lLeg) lLeg.rotation.set(0, 0, 0);
             if(rLeg) rLeg.rotation.set(0, 0, 0);
         }
@@ -267,22 +276,20 @@
             const delta = clock.getDelta();
 
             if (currentVrm) {
-                // 1. サンバ
+                // --- 1. ダンスモード ---
                 if (input.dance && mixer && sambaAction) {
-                    if (!sambaAction.isRunning()) {
-                        sambaAction.reset();
-                        sambaAction.play();
-                        sambaAction.fadeIn(0.2);
-                    }
+                    // ダンス中は手動制御を一切しない（Mixerに任せる）
+                    sambaAction.play();
                     mixer.update(delta);
-                
-                // 2. 歩行
+
+                // --- 2. 歩行モード ---
                 } else if (input.walk) {
-                    if (sambaAction && sambaAction.isRunning()) sambaAction.stop();
+                    // ダンスを即停止（ブレンドしない）
+                    if (sambaAction) sambaAction.stop(); 
                     
                     player.pos.z += config.walkSpeed * delta;
                     
-                    // 簡易歩行アニメ (Tポーズ基準で振る)
+                    // 手動で手足を振る
                     swingTime += delta * 10;
                     const s = Math.sin(swingTime) * 0.5;
                     const h = currentVrm.humanoid;
@@ -293,19 +300,19 @@
                     
                     if(lLeg) lLeg.rotation.set(s, 0, 0);
                     if(rLeg) rLeg.rotation.set(-s, 0, 0);
-                    // 腕は少し下げた位置(1.2)を中心に振る
-                    if(lArm) lArm.rotation.set(s*0.5, 0, 1.2);
-                    if(rArm) rArm.rotation.set(-s*0.5, 0, -1.2);
+                    // 腕は「下げた状態(1.4)」を基準に振る
+                    if(lArm) lArm.rotation.set(s*0.5, 0, 1.4);
+                    if(rArm) rArm.rotation.set(-s*0.5, 0, -1.4);
 
-                // 3. 待機
+                // --- 3. 待機モード ---
                 } else {
-                    if (sambaAction && sambaAction.isRunning()) sambaAction.fadeOut(0.2);
-                    mixer.update(delta);
-                    // 待機中はTポーズに戻す
-                    resetPose();
+                    // ダンスを即停止
+                    if (sambaAction) sambaAction.stop();
+                    // 強制的に腕を下ろすポーズを適用
+                    applyStandPose();
                 }
 
-                // 物理と座標
+                // 物理・座標反映
                 player.vel.y -= config.gravity * delta;
                 player.pos.y += player.vel.y * delta;
                 if (player.pos.y <= 0) { player.pos.y = 0; player.vel.y = 0; player.onGround = true; }
@@ -313,7 +320,7 @@
                 currentVrm.scene.position.copy(player.pos);
                 currentVrm.update(delta);
 
-                // カメラ
+                // カメラ追従
                 const target = player.pos.clone().add(new THREE.Vector3(0, 1.4, -3.5));
                 camera.position.lerp(target, 0.1);
                 camera.lookAt(player.pos.x, player.pos.y + 1.2, player.pos.z);
