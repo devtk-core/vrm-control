@@ -64,14 +64,17 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-        // --- グローバル変数 ---
+        // ==========================================
+        //  1. 変数定義 (ここを一番最初に実行させる)
+        // ==========================================
+        
+        // 時計を最優先で作成
+        const clock = new THREE.Clock();
+
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         
-        // ★修正点: clockをここで宣言します
-        const clock = new THREE.Clock();
-
         let currentVrm = null;
         
         const playerState = {
@@ -90,9 +93,9 @@
             gravity: 15.0
         };
 
-        // 初期化とループ開始
-        init();
-        animate();
+        // ==========================================
+        //  2. 関数定義
+        // ==========================================
 
         function init() {
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -117,6 +120,9 @@
             loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
 
             window.addEventListener('resize', onWindowResize);
+            
+            // 初期化が終わってからアニメーションを開始
+            animate();
         }
 
         function loadVRM(url) {
@@ -152,7 +158,7 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            // clockが初期化済みなのでエラーにならないはずです
+            // clockは一番上で作っているので、ここで確実に使えます
             const delta = clock.getDelta();
 
             if (currentVrm) {
@@ -191,6 +197,12 @@
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
+
+        // ==========================================
+        //  3. 実行開始
+        // ==========================================
+        init();
+
     </script>
 </body>
 </html>
