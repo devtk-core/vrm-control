@@ -3,34 +3,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>My VRM Dancer</title>
+    <title>VRM Ultimate Controller</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #333; font-family: sans-serif; }
-        
-        /* ファイル選択ボタンのデザイン */
-        #file-input { display: none; }
-        #btn-upload {
-            position: absolute; top: 20px; left: 20px;
-            background: #444; color: white; padding: 10px 20px;
-            border: 2px solid white; border-radius: 30px;
-            cursor: pointer; font-weight: bold; z-index: 100;
-        }
-        #btn-upload:hover { background: #666; }
 
-        #status-board { 
-            position: absolute; top: 70px; left: 20px; 
-            color: #00ff00; background: rgba(0,0,0,0.7); padding: 10px; 
-            pointer-events: none; border-radius: 5px;
+        /* --- UIレイアウト --- */
+        
+        /* 1. 左上のファイル読み込みボタン */
+        #file-ui {
+            position: absolute; top: 20px; left: 20px;
+            z-index: 1000; /* 最前面に表示 */
         }
+        #btn-open {
+            background: #444; color: white; padding: 12px 24px;
+            border: 2px solid white; border-radius: 30px;
+            cursor: pointer; font-weight: bold; font-size: 14px;
+            display: inline-block; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        #btn-open:hover { background: #666; transform: translateY(-2px); }
+        #file-input { display: none; } /* 本体のinputは隠す */
+
+        /* 2. ステータス表示 */
+        #status-board { 
+            position: absolute; top: 80px; left: 20px; 
+            color: #00ff00; background: rgba(0,0,0,0.7); padding: 10px; 
+            pointer-events: none; border-radius: 5px; font-family: monospace;
+        }
+
+        /* 3. 下部の操作ボタン群 */
+        #controls {
+            position: absolute; bottom: 30px; left: 20px; right: 20px;
+            display: flex; justify-content: space-between; pointer-events: none;
+        }
+        .btn-group { pointer-events: auto; display: flex; gap: 15px; align-items: center; }
+        
+        /* ボタン共通デザイン */
+        .control-btn {
+            width: 70px; height: 70px; border-radius: 50%;
+            border: 3px solid white; color: white;
+            font-weight: bold; font-size: 13px; cursor: pointer;
+            user-select: none; -webkit-user-select: none; touch-action: manipulation;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            transition: transform 0.1s, background 0.1s;
+        }
+        .control-btn:active { transform: scale(0.95); background: rgba(255,255,255,0.3); }
+
+        /* 色分け */
+        #btn-walk { background: rgba(0, 150, 255, 0.6); }
+        #btn-dance { background: rgba(255, 50, 150, 0.6); }
+        #btn-jump { background: rgba(50, 200, 50, 0.6); }
+
     </style>
 </head>
 <body>
-    <label id="btn-upload">
-        📂 VRMを開く
-        <input type="file" id="file-input" accept=".vrm">
-    </label>
 
-    <div id="status-board">Waiting for VRM...</div>
+    <div id="file-ui">
+        <label id="btn-open">
+            📂 VRMを開く
+            <input type="file" id="file-input" accept=".vrm">
+        </label>
+    </div>
+
+    <div id="status-board">System Ready</div>
+
+    <div id="controls">
+        <div class="btn-group">
+            <div class="control-btn" id="btn-walk" 
+                 ontouchstart="input.walk=true" ontouchend="input.walk=false" 
+                 onmousedown="input.walk=true" onmouseup="input.walk=false">歩く</div>
+            
+            <div class="control-btn" id="btn-dance" 
+                 ontouchstart="input.dance=true" ontouchend="input.dance=false" 
+                 onmousedown="input.dance=true" onmouseup="input.dance=false">サンバ</div>
+        </div>
+
+        <div class="btn-group">
+            <div class="control-btn" id="btn-jump" 
+                 ontouchstart="doJump()" onmousedown="doJump()">跳ぶ</div>
+        </div>
+    </div>
 
     <script type="importmap">
         {
@@ -48,50 +100,80 @@
         import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
         import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-        // --- 初期設定 ---
+        // --- グローバル変数 ---
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100);
-        camera.position.set(0, 1.5, -3); // カメラ位置
-        
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        // ライト
-        const light = new THREE.DirectionalLight(0xffffff, 1.0);
-        light.position.set(-1, 1, -1).normalize();
-        scene.add(light);
-        scene.add(new THREE.AmbientLight(0x404040));
-
-        let currentVrm = null;
-        let mixer = null;
         const clock = new THREE.Clock();
 
-        // アニメーションURL（サンバ）
-        const ANIMATION_URL = 'https://threejs.org/examples/models/fbx/Samba Dancing.fbx';
+        let currentVrm = null;
+        let mixer = null;       // サンバ用ミキサー
+        let sambaAction = null; // サンバのアクションデータ
+        let swingTime = 0;      // 歩行アニメ用タイマー
 
-        // --- ファイル読み込み処理 ---
-        const fileInput = document.getElementById('file-input');
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
+        // プレイヤー状態
+        const player = { pos: new THREE.Vector3(0, 0, 0), vel: new THREE.Vector3(0, 0, 0), onGround: true };
+        const config = { walkSpeed: 2.0, jumpPower: 5.0, gravity: 15.0 };
+        
+        // 入力状態
+        window.input = { walk: false, dance: false };
 
-            const blobUrl = URL.createObjectURL(file); // ローカルファイルをURL化
-            loadVRM(blobUrl);
-        });
+        // ログ表示
+        function log(msg) { document.getElementById('status-board').innerHTML = msg; }
 
-        // 初期モデル読み込み（最初はサンプルを表示）
-        loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
+        // --- 初期化 ---
+        init();
 
+        function init() {
+            // レンダラー設定
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            document.body.appendChild(renderer.domElement);
+
+            // シーン設定
+            scene.background = new THREE.Color(0x333333);
+            const grid = new THREE.GridHelper(50, 50, 0x888888, 0x444444);
+            scene.add(grid);
+            
+            const light = new THREE.DirectionalLight(0xffffff, 1.0);
+            light.position.set(-1, 1, -1).normalize();
+            scene.add(light);
+            scene.add(new THREE.AmbientLight(0x404040));
+
+            camera.position.set(0, 1.5, -3);
+
+            // ファイル選択イベント
+            document.getElementById('file-input').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const blobUrl = URL.createObjectURL(file);
+                    loadVRM(blobUrl);
+                }
+            });
+
+            // 最初にサンプルモデルを読み込む
+            loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
+            
+            // リサイズ対応
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            animate();
+        }
+
+        // --- VRM読み込み ---
         function loadVRM(url) {
-            const status = document.getElementById('status-board');
-            status.innerHTML = "Loading VRM...";
-
-            // 前のVRMがいれば消す
+            log("Loading VRM...");
+            
+            // 古いモデルの削除
             if (currentVrm) {
                 scene.remove(currentVrm.scene);
-                VRMUtils.deepDispose(currentVrm.scene); // メモリ解放
-                if(mixer) mixer.stopAllAction();
+                VRMUtils.deepDispose(currentVrm.scene);
+                if (mixer) mixer.stopAllAction();
             }
 
             const loader = new GLTFLoader();
@@ -100,33 +182,32 @@
             loader.load(url, (gltf) => {
                 const vrm = gltf.userData.vrm;
                 scene.add(vrm.scene);
-                vrm.scene.rotation.y = Math.PI; // こっち向く
+                vrm.scene.rotation.y = Math.PI; // カメラの方を向く
                 currentVrm = vrm;
 
-                status.innerHTML = "VRM Loaded! Loading Dance...";
+                // アニメーションミキサー準備
+                mixer = new THREE.AnimationMixer(currentVrm.scene);
+                
+                log("VRM Loaded! Loading Samba...");
 
-                // VRMが読み込めたら、サンバを読み込んで適用
-                loadMixamoAnimation(ANIMATION_URL, vrm);
+                // サンバの動きをWebから取得して準備しておく
+                loadSambaAnimation(vrm);
 
-            }, (progress) => {
-                status.innerHTML = "Loading: " + Math.round(100.0 * (progress.loaded / progress.total)) + "%";
-            }, (error) => {
-                status.innerHTML = "Error: " + error;
-                console.error(error);
-            });
+            }, 
+            (progress) => log("Loading: " + Math.round(100.0 * (progress.loaded / progress.total)) + "%"),
+            (error) => log("Error: " + error));
         }
 
-        function loadMixamoAnimation(url, vrm) {
-            const status = document.getElementById('status-board');
-            // アニメーションミキサー作成
-            mixer = new THREE.AnimationMixer(vrm.scene);
-
-            new FBXLoader().load(url, (asset) => {
+        // --- サンバアニメーションの準備 (FBX Loader) ---
+        function loadSambaAnimation(vrm) {
+            const fbxUrl = 'https://threejs.org/examples/models/fbx/Samba Dancing.fbx';
+            
+            new FBXLoader().load(fbxUrl, (asset) => {
                 const clip = asset.animations[0];
                 const tracks = [];
 
-                // Mixamo -> VRM 骨変換マップ
-                const mixamoMap = {
+                // Mixamoの骨 -> VRMの骨への変換マップ
+                const boneMap = {
                     'mixamorigHips': 'hips', 'mixamorigSpine': 'spine', 'mixamorigSpine1': 'chest', 'mixamorigSpine2': 'upperChest',
                     'mixamorigNeck': 'neck', 'mixamorigHead': 'head',
                     'mixamorigLeftShoulder': 'leftShoulder', 'mixamorigLeftArm': 'leftUpperArm', 'mixamorigLeftForeArm': 'leftLowerArm', 'mixamorigLeftHand': 'leftHand',
@@ -136,15 +217,13 @@
                 };
 
                 clip.tracks.forEach((track) => {
-                    const [bone, prop] = track.name.split('.');
-                    const mixamoName = bone.replace('mixamorig', 'mixamorig'); // prefix処理
-                    const vrmName = mixamoMap[mixamoName];
-                    
-                    if (vrmName) {
-                        const vrmNode = vrm.humanoid.getNormalizedBoneNode(vrmName);
+                    const [boneName, prop] = track.name.split('.');
+                    const simpleBoneName = boneName.replace('mixamorig', 'mixamorig');
+                    const vrmBoneName = boneMap[simpleBoneName];
+
+                    if (vrmBoneName) {
+                        const vrmNode = vrm.humanoid.getNormalizedBoneNode(vrmBoneName);
                         if (vrmNode) {
-                            // ヒップ（腰）の移動データだけは、高さ以外消すと「その場で踊る」ようになる
-                            // 今回はサンバなので、移動もそのままにしておきます（激しく動くため）
                             const t = track.clone();
                             t.name = `${vrmNode.name}.${prop}`;
                             tracks.push(t);
@@ -152,28 +231,104 @@
                     }
                 });
 
-                const action = mixer.clipAction(new THREE.AnimationClip('dance', clip.duration, tracks));
-                action.play();
-                status.innerHTML = "💃 Dancing! (Click button to change VRM)";
+                const newClip = new THREE.AnimationClip('samba', clip.duration, tracks);
+                sambaAction = mixer.clipAction(newClip);
+                log("Ready! Push Buttons below.");
 
             }, undefined, (e) => console.error(e));
         }
 
+        // --- アクション関数 ---
+        window.doJump = function() {
+            if (player.onGround) {
+                player.vel.y = config.jumpPower;
+                player.onGround = false;
+            }
+        };
+
+        // プロシージャル歩行（計算で動かす）
+        function animateProceduralWalk(delta) {
+            if (!currentVrm) return;
+            swingTime += delta * 10.0;
+            const s = Math.sin(swingTime) * 0.5;
+            const humanoid = currentVrm.humanoid;
+
+            const lLeg = humanoid.getNormalizedBoneNode('leftUpperLeg');
+            const rLeg = humanoid.getNormalizedBoneNode('rightUpperLeg');
+            const lArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+            const rArm = humanoid.getNormalizedBoneNode('rightUpperArm');
+
+            if (lLeg) lLeg.rotation.x = s;
+            if (rLeg) rLeg.rotation.x = -s;
+            if (lArm) lArm.rotation.set(s * 0.5, 0, 1.2); // 腕は少し下ろして振る
+            if (rArm) rArm.rotation.set(-s * 0.5, 0, -1.2);
+        }
+
+        function resetPose() {
+            if (!currentVrm) return;
+            const humanoid = currentVrm.humanoid;
+            const lArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+            const rArm = humanoid.getNormalizedBoneNode('rightUpperArm');
+            const lLeg = humanoid.getNormalizedBoneNode('leftUpperLeg');
+            const rLeg = humanoid.getNormalizedBoneNode('rightUpperLeg');
+
+            // 基本姿勢に戻す
+            if (lArm) lArm.rotation.set(0, 0, 1.3); // ハの字
+            if (rArm) rArm.rotation.set(0, 0, -1.3);
+            if (lLeg) lLeg.rotation.set(0, 0, 0);
+            if (rLeg) rLeg.rotation.set(0, 0, 0);
+        }
+
+        // --- メインループ ---
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
-            if (currentVrm) currentVrm.update(delta);
-            if (mixer) mixer.update(delta);
+
+            if (currentVrm) {
+                // 1. サンバ（踊る）処理
+                if (window.input.dance && mixer && sambaAction) {
+                    if (!sambaAction.isRunning()) {
+                        sambaAction.reset();
+                        sambaAction.play();
+                        sambaAction.fadeIn(0.2);
+                    }
+                    mixer.update(delta);
+                
+                // 2. 歩行処理
+                } else if (window.input.walk) {
+                    if (sambaAction && sambaAction.isRunning()) sambaAction.stop(); // ダンス中断
+                    
+                    player.pos.z += config.walkSpeed * delta;
+                    animateProceduralWalk(delta); // 手足を振る
+                
+                // 3. 待機
+                } else {
+                    if (sambaAction && sambaAction.isRunning()) sambaAction.fadeOut(0.2);
+                    mixer.update(delta); // フェードアウト用
+                    resetPose(); // 手足を戻す
+                }
+
+                // 物理演算
+                player.vel.y -= config.gravity * delta;
+                player.pos.y += player.vel.y * delta;
+                if (player.pos.y <= 0) {
+                    player.pos.y = 0;
+                    player.vel.y = 0;
+                    player.onGround = true;
+                }
+
+                // 反映
+                currentVrm.scene.position.copy(player.pos);
+                currentVrm.update(delta);
+
+                // カメラ追従
+                const camTarget = player.pos.clone().add(new THREE.Vector3(0, 1.5, -3.0));
+                camera.position.lerp(camTarget, 0.1);
+                camera.lookAt(player.pos.clone().add(new THREE.Vector3(0, 1.3, 0)));
+            }
+
             renderer.render(scene, camera);
         }
-        
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        animate();
     </script>
 </body>
 </html>
