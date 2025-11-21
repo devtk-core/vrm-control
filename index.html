@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Yuta VRM Controller</title>
+    <title>VRM DJ Dance Battle</title>
     <style>
-        /* --- 画面全体設定 --- */
+        /* --- 画面固定 --- */
         html, body {
             margin: 0; padding: 0; width: 100vw; height: 100dvh;
             position: fixed; inset: 0;
@@ -83,7 +83,6 @@
     </div>
 
     <div id="status-board">System Ready</div>
-
     <div id="youtube-container"><div id="player"></div></div>
 
     <div id="controls">
@@ -99,6 +98,16 @@
 
     <script>
         var ytPlayer = null;
+        
+        // ★ プレイリスト定義
+        // 0: 本家サンバ (27秒目から)
+        // 1: ホドモエシティ (最初から)
+        var playlist = [
+            { id: 'fhHKYR-v0UE', start: 27 }, 
+            { id: 'xc_0wfIuuzk', start: 0 }
+        ];
+        var trackIndex = 0; // 現在の曲番号
+
         var tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         var firstScriptTag = document.getElementsByTagName('script')[0];
@@ -106,23 +115,36 @@
 
         function onYouTubeIframeAPIReady() {
             var origin = window.location.origin;
+            // 最初はリストの0番目をロードしておく
             ytPlayer = new YT.Player('player', {
                 height: '100%', width: '100%',
-                videoId: 'cyxd78Hc2SM',
+                videoId: playlist[0].id,
                 host: 'https://www.youtube.com',
                 playerVars: {
-                    'playsinline': 1, 'controls': 0, 'loop': 1, 'playlist': 'cyxd78Hc2SM',
+                    'playsinline': 1, 'controls': 0, 'loop': 1, 
                     'origin': origin
                 }
             });
         }
 
+        // 再生/停止 & 曲切り替え関数
         window.controlVideoGlobal = function(play) {
             var container = document.getElementById('youtube-container');
-            if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+            if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
                 if (play) {
-                    ytPlayer.playVideo();
+                    // 現在の順番の曲情報を取得
+                    var track = playlist[trackIndex];
+                    
+                    // 指定の曲・時間でロードして再生
+                    ytPlayer.loadVideoById({
+                        videoId: track.id,
+                        startSeconds: track.start
+                    });
+                    
                     container.classList.add('show');
+
+                    // 次回のためにインデックスを進める (0 -> 1 -> 0 ...)
+                    trackIndex = (trackIndex + 1) % playlist.length;
                 } else {
                     ytPlayer.pauseVideo();
                     container.classList.remove('show');
@@ -163,7 +185,6 @@
 
         function log(msg) { document.getElementById('status-board').innerText = msg; }
 
-        // モード切替
         window.toggleMode = (mode) => {
             const btnWalk = document.getElementById('btn-walk');
             const btnDance = document.getElementById('btn-dance');
@@ -173,7 +194,7 @@
                 btnWalk.classList.remove('active-walk');
                 btnDance.classList.remove('active-dance');
                 if (sambaAction) sambaAction.stop();
-                window.controlVideoGlobal(false);
+                window.controlVideoGlobal(false); // 停止
             } else {
                 currentMode = mode;
                 btnWalk.classList.toggle('active-walk', mode === 'walk');
@@ -184,10 +205,10 @@
                         sambaAction.reset();
                         sambaAction.play();
                     }
-                    window.controlVideoGlobal(true);
+                    window.controlVideoGlobal(true); // 再生(ここで曲が変わる)
                 } else {
                     if (sambaAction) sambaAction.stop();
-                    window.controlVideoGlobal(false);
+                    window.controlVideoGlobal(false); // 停止
                 }
             }
         };
@@ -234,12 +255,7 @@
                 camera.position.set(player.pos.x, player.pos.y + 1.4, player.pos.z - 3.5);
             });
 
-            // ★ ここを変更: ゆーた.vrm を読み込む
-            // ※ファイル名に日本語が含まれているので、念のためエンコードしても良いですが
-            //   最近のブラウザはそのまま書いても大体通ります。
-            //   もし404エラーが出たら '%E3%82%86%E3%83%BC%E3%81%9F.vrm' に変えてみてください。
             loadVRM('./ゆーた.vrm');
-            
             animate();
         }
 
@@ -249,29 +265,23 @@
                 scene.remove(currentVrm.scene);
                 VRMUtils.deepDispose(currentVrm.scene);
             }
-
             const loader = new GLTFLoader();
             loader.register((parser) => new VRMLoaderPlugin(parser));
-
-            // エラーハンドリング強化
             loader.load(url, (gltf) => {
                 const vrm = gltf.userData.vrm;
                 scene.add(vrm.scene);
                 vrm.scene.rotation.y = Math.PI; 
                 currentVrm = vrm;
                 mixer = new THREE.AnimationMixer(currentVrm.scene);
-                
                 applyStandPose();
                 log("VRM Loaded. Loading Dance...");
                 loadSamba();
-            }, 
-            undefined, 
-            (e) => {
-                log("Error loading VRM: " + e);
+            }, undefined, (e) => {
                 console.error(e);
-                // ファイルが見つからない場合のヒント
-                if ((e + "").includes("404")) {
-                     alert("『ゆーた.vrm』が見つかりません！\nindex.htmlと同じ場所にアップロードしましたか？");
+                // エラーが出たらサンプルにフォールバック
+                if((e+"").includes("404")) {
+                    log("ゆーた.vrm not found. Using sample.");
+                    loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
                 }
             });
         }
@@ -318,46 +328,4 @@
             if(lArm) lArm.rotation.set(0, 0, 1.4);
             if(rArm) rArm.rotation.set(0, 0, -1.4);
             if(lLeg) lLeg.rotation.set(0, 0, 0);
-            if(rLeg) rLeg.rotation.set(0, 0, 0);
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            const delta = clock.getDelta();
-
-            if (currentVrm) {
-                if (currentMode === 'dance') {
-                    if (mixer && sambaAction) mixer.update(delta);
-                } else if (currentMode === 'walk') {
-                    player.pos.z += config.walkSpeed * delta;
-                    swingTime += delta * 10;
-                    const s = Math.sin(swingTime) * 0.5;
-                    const h = currentVrm.humanoid;
-                    const lLeg = h.getNormalizedBoneNode('leftUpperLeg');
-                    const rLeg = h.getNormalizedBoneNode('rightUpperLeg');
-                    const lArm = h.getNormalizedBoneNode('leftUpperArm');
-                    const rArm = h.getNormalizedBoneNode('rightUpperArm');
-                    if(lLeg) lLeg.rotation.set(s, 0, 0);
-                    if(rLeg) rLeg.rotation.set(-s, 0, 0);
-                    if(lArm) lArm.rotation.set(s*0.5, 0, 1.4);
-                    if(rArm) rArm.rotation.set(-s*0.5, 0, -1.4);
-                } else {
-                    applyStandPose();
-                }
-
-                player.vel.y -= config.gravity * delta;
-                player.pos.y += player.vel.y * delta;
-                if (player.pos.y <= 0) { player.pos.y = 0; player.vel.y = 0; player.onGround = true; }
-
-                currentVrm.scene.position.copy(player.pos);
-                currentVrm.update(delta);
-
-                const target = player.pos.clone().add(new THREE.Vector3(0, 1.4, -3.5));
-                camera.position.lerp(target, 0.1);
-                camera.lookAt(player.pos.x, player.pos.y + 1.2, player.pos.z);
-            }
-            renderer.render(scene, camera);
-        }
-    </script>
-</body>
-</html>
+            if(rLeg) rLeg.rotation.set(0, 0,
