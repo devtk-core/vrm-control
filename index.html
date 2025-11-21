@@ -3,69 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>VRM Mobile Final Fix</title>
+    <title>VRM Final Perfect</title>
     <style>
-        /* --- スマホ画面固定の鉄板設定 --- */
+        /* --- 画面全体設定 --- */
         html, body {
             margin: 0; padding: 0;
-            width: 100vw; 
-            height: 100dvh; /* アドレスバーを考慮した高さ */
-            overflow: hidden; /* はみ出し禁止 */
+            width: 100vw; height: 100dvh;
+            overflow: hidden;
             background-color: #333;
-            touch-action: none; /* スワイプでの戻る操作などを無効化 */
-            position: fixed; /* 画面全体を固定 */
+            touch-action: none;
+            position: fixed;
         }
-        
-        canvas {
-            display: block;
-            width: 100%; height: 100%;
-        }
+        canvas { display: block; width: 100%; height: 100%; }
 
-        /* --- UIはすべて fixed (画面固定) にする --- */
-        
-        /* 1. ファイル選択ボタン */
+        /* --- UI (位置ズレ防止のFixed配置) --- */
         #file-ui {
-            position: fixed; /* absoluteではなくfixedにする */
-            top: 20px; left: 20px;
-            /* ノッチ対策 */
+            position: fixed;
             top: max(20px, env(safe-area-inset-top));
             left: max(20px, env(safe-area-inset-left));
             z-index: 1000;
         }
-        
         #btn-open {
             background: #444; color: white; padding: 10px 20px;
             border: 2px solid white; border-radius: 30px;
             cursor: pointer; font-weight: bold; font-size: 14px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.5);
-            white-space: nowrap;
         }
         #file-input { display: none; }
 
-        /* 2. ステータス文字 */
         #status-board { 
             position: fixed;
-            top: 70px; left: 20px;
             top: calc(max(20px, env(safe-area-inset-top)) + 50px);
             left: max(20px, env(safe-area-inset-left));
             color: #00ff00; background: rgba(0,0,0,0.6); padding: 8px; 
             pointer-events: none; border-radius: 5px; font-family: monospace; font-size: 12px;
-            max-width: 90%;
         }
 
-        /* 3. 操作ボタンエリア */
         #controls {
             position: fixed;
-            bottom: 20px; left: 20px; right: 20px;
-            /* ホームバー対策 */
             bottom: max(20px, env(safe-area-inset-bottom));
             left: max(20px, env(safe-area-inset-left));
             right: max(20px, env(safe-area-inset-right));
-            
-            display: flex; justify-content: space-between; 
-            pointer-events: none;
+            display: flex; justify-content: space-between; pointer-events: none;
         }
-
         .btn-group { pointer-events: auto; display: flex; gap: 15px; }
         
         .control-btn {
@@ -92,7 +72,7 @@
         </label>
     </div>
 
-    <div id="status-board">Loading System...</div>
+    <div id="status-board">System Ready</div>
 
     <div id="controls">
         <div class="btn-group">
@@ -127,7 +107,6 @@
         import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
         import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-        // --- 変数 ---
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -144,7 +123,7 @@
 
         function log(msg) { document.getElementById('status-board').innerText = msg; }
 
-        // --- 操作ハンドラ (スマホのスクロール暴発防止) ---
+        // 操作イベント
         window.startWalk = (e) => { if(e.cancelable) e.preventDefault(); input.walk = true; };
         window.stopWalk = (e) => { if(e.cancelable) e.preventDefault(); input.walk = false; };
         window.startDance = (e) => { if(e.cancelable) e.preventDefault(); input.dance = true; };
@@ -157,7 +136,6 @@
             }
         };
 
-        // --- 初期化 ---
         init();
 
         function init() {
@@ -177,26 +155,23 @@
 
             camera.position.set(0, 1.4, -3.5);
 
-            // ファイル読み込み
             document.getElementById('file-input').addEventListener('change', (e) => {
                 const file = e.target.files[0];
                 if (file) loadVRM(URL.createObjectURL(file));
             });
 
-            // 画面リサイズ
             window.addEventListener('resize', () => {
                 camera.aspect = window.innerWidth / window.innerHeight;
                 camera.updateProjectionMatrix();
                 renderer.setSize(window.innerWidth, window.innerHeight);
             });
 
-            // ダブルタップでカメラリセット（迷子防止）
+            // カメラリセット
             document.addEventListener('dblclick', () => {
                 camera.position.set(player.pos.x, player.pos.y + 1.4, player.pos.z - 3.5);
                 camera.lookAt(player.pos.x, player.pos.y + 1.2, player.pos.z);
             });
 
-            // 初期モデル
             loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
             
             animate();
@@ -219,8 +194,11 @@
                 currentVrm = vrm;
                 
                 mixer = new THREE.AnimationMixer(currentVrm.scene);
-                log("VRM Loaded. Loading Dance...");
                 
+                // ★重要: ロード直後にTポーズを強制適用
+                resetPose();
+
+                log("VRM Loaded. Loading Dance...");
                 loadSamba();
             }, 
             undefined, 
@@ -228,23 +206,18 @@
         }
 
         function loadSamba() {
-            // サンバのURL
             const url = 'https://threejs.org/examples/models/fbx/Samba Dancing.fbx';
             
             new FBXLoader().load(url, (asset) => {
                 const clip = asset.animations[0];
                 const tracks = [];
                 
-                // 骨の対応マップ
                 const map = {
                     'mixamorigHips': 'hips', 'mixamorigSpine': 'spine', 'mixamorigSpine1': 'chest', 'mixamorigSpine2': 'upperChest',
                     'mixamorigNeck': 'neck', 'mixamorigHead': 'head',
                     'mixamorigLeftShoulder': 'leftShoulder', 'mixamorigLeftArm': 'leftUpperArm', 'mixamorigLeftForeArm': 'leftLowerArm', 
-                    // ★Handを削除（ここをマッピングしないことで手首の骨折を防ぐ！）
-                    // 'mixamorigLeftHand': 'leftHand', 
+                    // Handマッピング削除（手首ねじれ防止）
                     'mixamorigRightShoulder': 'rightShoulder', 'mixamorigRightArm': 'rightUpperArm', 'mixamorigRightForeArm': 'rightLowerArm', 
-                    // 'mixamorigRightHand': 'rightHand', 
-                    
                     'mixamorigLeftUpLeg': 'leftUpperLeg', 'mixamorigLeftLeg': 'leftLowerLeg', 'mixamorigLeftFoot': 'leftFoot', 
                     'mixamorigRightUpLeg': 'rightUpperLeg', 'mixamorigRightLeg': 'rightLowerLeg', 'mixamorigRightFoot': 'rightFoot'
                 };
@@ -255,8 +228,6 @@
                     const vrmBone = map[simpleBone];
 
                     if (vrmBone) {
-                        // 拡大縮小(scale)と位置移動(position)を除去して、消滅バグを防ぐ
-                        // ※ただしHipsの回転は必要
                         if (prop === 'scale') return;
                         if (prop === 'position') return; 
 
@@ -273,6 +244,22 @@
                 sambaAction = mixer.clipAction(newClip);
                 log("Ready! Tap buttons.");
             });
+        }
+
+        // ★修正: Tポーズ(0,0,0)にリセットする関数
+        function resetPose() {
+            if (!currentVrm) return;
+            const h = currentVrm.humanoid;
+            const lArm = h.getNormalizedBoneNode('leftUpperArm');
+            const rArm = h.getNormalizedBoneNode('rightUpperArm');
+            const lLeg = h.getNormalizedBoneNode('leftUpperLeg');
+            const rLeg = h.getNormalizedBoneNode('rightUpperLeg');
+
+            // すべて 0,0,0 (T-Pose) にする
+            if(lArm) lArm.rotation.set(0, 0, 0);
+            if(rArm) rArm.rotation.set(0, 0, 0);
+            if(lLeg) lLeg.rotation.set(0, 0, 0);
+            if(rLeg) rLeg.rotation.set(0, 0, 0);
         }
 
         function animate() {
@@ -294,7 +281,8 @@
                     if (sambaAction && sambaAction.isRunning()) sambaAction.stop();
                     
                     player.pos.z += config.walkSpeed * delta;
-                    // 簡易歩行アニメ
+                    
+                    // 簡易歩行アニメ (Tポーズ基準で振る)
                     swingTime += delta * 10;
                     const s = Math.sin(swingTime) * 0.5;
                     const h = currentVrm.humanoid;
@@ -302,8 +290,10 @@
                     const rLeg = h.getNormalizedBoneNode('rightUpperLeg');
                     const lArm = h.getNormalizedBoneNode('leftUpperArm');
                     const rArm = h.getNormalizedBoneNode('rightUpperArm');
-                    if(lLeg) lLeg.rotation.x = s;
-                    if(rLeg) rLeg.rotation.x = -s;
+                    
+                    if(lLeg) lLeg.rotation.set(s, 0, 0);
+                    if(rLeg) rLeg.rotation.set(-s, 0, 0);
+                    // 腕は少し下げた位置(1.2)を中心に振る
                     if(lArm) lArm.rotation.set(s*0.5, 0, 1.2);
                     if(rArm) rArm.rotation.set(-s*0.5, 0, -1.2);
 
@@ -311,19 +301,11 @@
                 } else {
                     if (sambaAction && sambaAction.isRunning()) sambaAction.fadeOut(0.2);
                     mixer.update(delta);
-                    // ポーズリセット
-                    const h = currentVrm.humanoid;
-                    const lArm = h.getNormalizedBoneNode('leftUpperArm');
-                    const rArm = h.getNormalizedBoneNode('rightUpperArm');
-                    const lLeg = h.getNormalizedBoneNode('leftUpperLeg');
-                    const rLeg = h.getNormalizedBoneNode('rightUpperLeg');
-                    if(lArm) lArm.rotation.set(0, 0, 1.3);
-                    if(rArm) rArm.rotation.set(0, 0, -1.3);
-                    if(lLeg) lLeg.rotation.set(0, 0, 0);
-                    if(rLeg) rLeg.rotation.set(0, 0, 0);
+                    // 待機中はTポーズに戻す
+                    resetPose();
                 }
 
-                // 物理と座標更新
+                // 物理と座標
                 player.vel.y -= config.gravity * delta;
                 player.pos.y += player.vel.y * delta;
                 if (player.pos.y <= 0) { player.pos.y = 0; player.vel.y = 0; player.onGround = true; }
@@ -331,7 +313,7 @@
                 currentVrm.scene.position.copy(player.pos);
                 currentVrm.update(delta);
 
-                // カメラ追従
+                // カメラ
                 const target = player.pos.clone().add(new THREE.Vector3(0, 1.4, -3.5));
                 camera.position.lerp(target, 0.1);
                 camera.lookAt(player.pos.x, player.pos.y + 1.2, player.pos.z);
