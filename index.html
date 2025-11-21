@@ -3,17 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>VRM Walking Demo</title>
+    <title>VRM Walking Demo (Debug)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #333; font-family: sans-serif; }
         canvas { display: block; }
         
         /* 操作UI */
         #controls {
-            position: absolute;
-            bottom: 20px; left: 20px; right: 20px;
-            display: flex; justify-content: space-between;
-            pointer-events: none;
+            position: absolute; bottom: 20px; left: 20px; right: 20px;
+            display: flex; justify-content: space-between; pointer-events: none;
         }
         .btn-group { pointer-events: auto; display: flex; gap: 10px; }
         button {
@@ -22,21 +20,44 @@
             touch-action: manipulation; user-select: none; cursor: pointer;
         }
         button:active { background: rgba(255, 255, 255, 0.6); }
-        #loading { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.5); padding: 5px; }
+        
+        /* 読み込み・エラー表示用 */
+        #status-board { 
+            position: absolute; top: 10px; left: 10px; 
+            color: white; background: rgba(0,0,0,0.7); padding: 10px; 
+            pointer-events: none; max-width: 90%; word-wrap: break-word;
+        }
+        .error-msg { color: #ff5555; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div id="loading">Loading VRM...</div>
+    <div id="status-board">Initializing...</div>
 
     <div id="controls">
         <div class="btn-group">
-            <button id="btn-walk" ontouchstart="input.walk=true" ontouchend="input.walk=false" onmousedown="input.walk=true" onmouseup="input.walk=false">歩く</button>
-            <button id="btn-dash" ontouchstart="input.dash=true" ontouchend="input.dash=false" onmousedown="input.dash=true" onmouseup="input.dash=false">走る</button>
+            <button id="btn-walk" ontouchstart="startWalk()" ontouchend="stopWalk()" onmousedown="startWalk()" onmouseup="stopWalk()">歩く</button>
+            <button id="btn-dash" ontouchstart="startDash()" ontouchend="stopDash()" onmousedown="startDash()" onmouseup="stopDash()">走る</button>
         </div>
         <div class="btn-group">
             <button id="btn-jump" ontouchstart="doJump()" onmousedown="doJump()">跳ぶ</button>
         </div>
     </div>
+
+    <script>
+        // エラーを画面に出すための仕掛け
+        window.showError = function(msg) {
+            const board = document.getElementById('status-board');
+            board.innerHTML += '<br><span class="error-msg">Error: ' + msg + '</span>';
+            console.error(msg);
+        };
+        window.logStatus = function(msg) {
+            const board = document.getElementById('status-board');
+            board.innerHTML = msg;
+        };
+        window.addEventListener('error', function(e) {
+            window.showError(e.message);
+        });
+    </script>
 
     <script type="importmap">
         {
@@ -51,18 +72,20 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import { VRMLoaderPlugin, VRMUtils, VRMHumanBoneName } from '@pixiv/three-vrm';
+        // ★修正: VRMHumanBoneName のインポートをやめて、エラーの可能性を減らす
+        import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
-        // =============================
-        // 1. 初期設定
-        // =============================
+        // --- 1. 初期化と変数 ---
+        
+        window.logStatus("Setting up Three.js...");
+
         const clock = new THREE.Clock();
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         
         let currentVrm = null;
-        let swingTime = 0; // 手足の振りを管理するタイマー
+        let swingTime = 0;
         
         const playerState = {
             position: new THREE.Vector3(0, 0, 0),
@@ -70,48 +93,54 @@
             onGround: true
         };
         
+        // 入力管理（関数経由に変更して安全性を向上）
         window.input = { walk: false, dash: false };
+        window.startWalk = () => { window.input.walk = true; };
+        window.stopWalk = () => { window.input.walk = false; };
+        window.startDash = () => { window.input.dash = true; };
+        window.stopDash = () => { window.input.dash = false; };
 
         const CONFIG = {
-            walkSpeed: 2.0,
-            dashSpeed: 6.0,
-            jumpPower: 5.0,
-            gravity: 15.0,
-            walkSwingSpeed: 8.0, // 歩くときの手足の振りの速さ
-            dashSwingSpeed: 15.0 // 走るときの手足の振りの速さ
+            walkSpeed: 2.0, dashSpeed: 6.0, jumpPower: 5.0, gravity: 15.0,
+            walkSwingSpeed: 8.0, dashSwingSpeed: 15.0
         };
 
-        // =============================
-        // 2. 関数定義
-        // =============================
+        // --- 2. メイン処理 ---
 
         function init() {
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.outputColorSpace = THREE.SRGBColorSpace;
-            document.body.appendChild(renderer.domElement);
+            try {
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                renderer.outputColorSpace = THREE.SRGBColorSpace;
+                document.body.appendChild(renderer.domElement);
 
-            scene.background = new THREE.Color(0xa0a0a0);
-            scene.fog = new THREE.Fog(0xa0a0a0, 10, 50);
+                scene.background = new THREE.Color(0xa0a0a0);
+                scene.fog = new THREE.Fog(0xa0a0a0, 10, 50);
 
-            const grid = new THREE.GridHelper(50, 50, 0x888888, 0x444444);
-            scene.add(grid);
+                // ライト・床
+                const grid = new THREE.GridHelper(50, 50, 0x888888, 0x444444);
+                scene.add(grid);
+                const light = new THREE.DirectionalLight(0xffffff, 1.0);
+                light.position.set(1, 1, 1).normalize();
+                scene.add(light);
+                scene.add(new THREE.AmbientLight(0x404040));
 
-            const light = new THREE.DirectionalLight(0xffffff, 1.0);
-            light.position.set(1, 1, 1).normalize();
-            scene.add(light);
-            const ambient = new THREE.AmbientLight(0x404040);
-            scene.add(ambient);
+                camera.position.set(0, 1.5, -3);
 
-            camera.position.set(0, 1.5, -3);
+                // モデル読み込み
+                loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
 
-            loadVRM('https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm');
-
-            window.addEventListener('resize', onWindowResize);
-            animate();
+                window.addEventListener('resize', onWindowResize);
+                
+                // アニメーション開始
+                animate();
+            } catch (e) {
+                window.showError(e);
+            }
         }
 
         function loadVRM(url) {
+            window.logStatus("Loading VRM Model...");
             const loader = new GLTFLoader();
             loader.register((parser) => new VRMLoaderPlugin(parser));
 
@@ -119,12 +148,22 @@
                 const vrm = gltf.userData.vrm;
                 VRMUtils.removeUnnecessaryVertices(gltf.scene);
                 VRMUtils.combineSkeletons(gltf.scene);
+                
                 scene.add(vrm.scene);
                 currentVrm = vrm;
                 vrm.scene.rotation.y = Math.PI; 
-                console.log('VRM Loaded');
-                document.getElementById('loading').style.display = 'none';
-            }, undefined, (error) => console.error(error));
+
+                window.logStatus("VRM Loaded! Ready.");
+                
+                // 初期の腕の位置を少し下げる
+                resetPose();
+            }, 
+            (progress) => {
+                window.logStatus("Loading: " + Math.round(100.0 * (progress.loaded / progress.total)) + "%");
+            },
+            (error) => {
+                window.showError("Failed to load VRM: " + error);
+            });
         }
 
         window.doJump = function() {
@@ -134,46 +173,49 @@
             }
         };
 
-        // ★追加: 簡易的な歩行アニメーション関数
+        // アニメーション処理（文字列で骨を指定して安全に）
         function animateWalk(delta, speed) {
             if (!currentVrm || !currentVrm.humanoid) return;
 
-            const humanoid = currentVrm.humanoid;
-            
-            // 振りの速さを決定
             const swingSpeed = (speed >= CONFIG.dashSpeed) ? CONFIG.dashSwingSpeed : CONFIG.walkSwingSpeed;
-            // 振りの大きさを決定（走るときは大きく）
             const swingMagnitude = (speed >= CONFIG.dashSpeed) ? 0.8 : 0.5;
 
             swingTime += delta * swingSpeed;
 
-            // Math.sin()を使って周期的な動きを作る
-            // 腕は足と逆の動きにするために位相をずらす
             const legAngle = Math.sin(swingTime) * swingMagnitude;
-            const armAngle = Math.sin(swingTime + Math.PI) * swingMagnitude * 0.6; // 腕は少し控えめに
+            const armAngle = Math.sin(swingTime + Math.PI) * swingMagnitude * 0.6;
 
-            // ボーンを取得して回転を適用
-            const leftUpperLeg = humanoid.getNormalizedBoneNode(VRMHumanBoneName.LeftUpperLeg);
-            const rightUpperLeg = humanoid.getNormalizedBoneNode(VRMHumanBoneName.RightUpperLeg);
-            const leftUpperArm = humanoid.getNormalizedBoneNode(VRMHumanBoneName.LeftUpperArm);
-            const rightUpperArm = humanoid.getNormalizedBoneNode(VRMHumanBoneName.RightUpperArm);
+            const humanoid = currentVrm.humanoid;
+            
+            // ★修正: ここを文字列リテラルに変更 ('leftUpperLeg' など)
+            const leftLeg = humanoid.getNormalizedBoneNode('leftUpperLeg');
+            const rightLeg = humanoid.getNormalizedBoneNode('rightUpperLeg');
+            const leftArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+            const rightArm = humanoid.getNormalizedBoneNode('rightUpperArm');
 
-            if (leftUpperLeg) leftUpperLeg.rotation.x = legAngle;
-            if (rightUpperLeg) rightUpperLeg.rotation.x = -legAngle;
-            // 腕は初期姿勢がTポーズなので、少し下ろした状態(z回転)から振る(x回転)
-            if (leftUpperArm) leftUpperArm.rotation.set(armAngle, 0, Math.PI / 2.5); 
-            if (rightUpperArm) rightUpperArm.rotation.set(-armAngle, 0, -Math.PI / 2.5);
+            if (leftLeg) leftLeg.rotation.x = legAngle;
+            if (rightLeg) rightLeg.rotation.x = -legAngle;
+            
+            // 腕は基本の下げ角度(PI/2.5)に振りを加える
+            if (leftArm) leftArm.rotation.set(armAngle, 0, Math.PI / 2.5); 
+            if (rightArm) rightArm.rotation.set(-armAngle, 0, -Math.PI / 2.5);
         }
 
-        // ★追加: 立ちポーズに戻す関数
         function resetPose() {
             if (!currentVrm || !currentVrm.humanoid) return;
             const humanoid = currentVrm.humanoid;
-            // 簡易的に腕だけ少し下ろす
-            const leftUpperArm = humanoid.getNormalizedBoneNode(VRMHumanBoneName.LeftUpperArm);
-            const rightUpperArm = humanoid.getNormalizedBoneNode(VRMHumanBoneName.RightUpperArm);
-            if (leftUpperArm) leftUpperArm.rotation.set(0, 0, Math.PI / 3);
-            if (rightUpperArm) rightUpperArm.rotation.set(0, 0, -Math.PI / 3);
+            const leftArm = humanoid.getNormalizedBoneNode('leftUpperArm');
+            const rightArm = humanoid.getNormalizedBoneNode('rightUpperArm');
+            
+            // 待機時は少し腕を下げる
+            if (leftArm) leftArm.rotation.set(0, 0, Math.PI / 3.5);
+            if (rightArm) rightArm.rotation.set(0, 0, -Math.PI / 3.5);
+            
+            // 足を戻す
+            const leftLeg = humanoid.getNormalizedBoneNode('leftUpperLeg');
+            const rightLeg = humanoid.getNormalizedBoneNode('rightUpperLeg');
+            if (leftLeg) leftLeg.rotation.x = 0;
+            if (rightLeg) rightLeg.rotation.x = 0;
         }
 
         function animate() {
@@ -185,20 +227,17 @@
                 if (window.input.dash) speed = CONFIG.dashSpeed;
                 else if (window.input.walk) speed = CONFIG.walkSpeed;
 
-                // 移動処理
                 if (speed > 0) {
                     playerState.position.z += speed * delta;
-                    // ★移動中ならアニメーションさせる
                     animateWalk(delta, speed);
                 } else {
-                    // ★止まっているならリセット
+                    swingTime = 0;
                     resetPose();
-                    swingTime = 0; // タイマーリセット
                 }
 
-                // ジャンプ・重力
                 playerState.velocity.y -= CONFIG.gravity * delta;
                 playerState.position.y += playerState.velocity.y * delta;
+
                 if (playerState.position.y <= 0) {
                     playerState.position.y = 0;
                     playerState.velocity.y = 0;
@@ -208,9 +247,7 @@
                 currentVrm.scene.position.copy(playerState.position);
                 currentVrm.update(delta);
                 
-                // カメラ追従
-                const cameraOffset = new THREE.Vector3(0, 1.5, -3.0); 
-                const targetPosition = playerState.position.clone().add(cameraOffset);
+                const targetPosition = playerState.position.clone().add(new THREE.Vector3(0, 1.5, -3.0));
                 camera.position.lerp(targetPosition, 0.1);
                 camera.lookAt(playerState.position.clone().add(new THREE.Vector3(0, 1.3, 0)));
             }
@@ -223,9 +260,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
-        // =============================
-        // 3. 実行開始
-        // =============================
+        // 実行
         init();
     </script>
 </body>
