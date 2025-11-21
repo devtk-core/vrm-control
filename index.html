@@ -131,8 +131,9 @@
 
                 log("VRM Loaded. Loading FBX...");
                 // 2. MixamoのFBXを読み込んで適用
-                loadMixamoAnimation('./walk.fbx', vrm);
-
+                // loadMixamoAnimation('./walk.fbx', vrm);
+                // テスト用に、Three.js公式のサンプルのURLを使ってみる
+                loadMixamoAnimation('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/fbx/Samba Dancing.fbx', vrm);
             }, undefined, (e) => log("VRM Error: " + e));
         }
 
