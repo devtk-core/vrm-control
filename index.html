@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>VRM Toggle Controller</title>
+    <title>VRM Samba with YouTube</title>
     <style>
         /* --- 画面固定設定 --- */
         html, body {
@@ -40,7 +40,7 @@
             bottom: max(30px, env(safe-area-inset-bottom));
             left: max(20px, env(safe-area-inset-left));
             right: max(20px, env(safe-area-inset-right));
-            display: flex; justify-content: space-between; pointer-events: auto;
+            display: flex; justify-content: space-between; pointer-events: auto; z-index: 1000;
         }
         .btn-group { display: flex; gap: 15px; }
         
@@ -51,15 +51,30 @@
             display: flex; align-items: center; justify-content: center;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
             transition: all 0.2s ease;
-            background: rgba(100, 100, 100, 0.5); /* 未選択状態 */
+            background: rgba(100, 100, 100, 0.5);
+            touch-action: manipulation;
         }
         
-        /* アクティブ時のスタイル */
         .active-walk { background: #0096ff !important; transform: scale(1.1); box-shadow: 0 0 15px #0096ff; }
         .active-dance { background: #ff3296 !important; transform: scale(1.1); box-shadow: 0 0 15px #ff3296; }
-        
-        /* ジャンプは押した時だけ */
         #btn-jump:active { background: #32c832; transform: scale(0.9); }
+
+        /* --- YouTubeプレーヤー (右下に小さく表示) --- */
+        #youtube-container {
+            position: fixed;
+            bottom: 120px; /* ボタンの少し上 */
+            right: 20px;
+            width: 200px; height: 113px; /* 16:9 */
+            z-index: 900;
+            border: 2px solid white; border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            background: black;
+            /* 最初は隠しておく（透明にしておく） */
+            opacity: 0; pointer-events: none; transition: opacity 0.5s;
+        }
+        /* 再生中は表示 */
+        #youtube-container.show { opacity: 1; pointer-events: auto; }
 
     </style>
 </head>
@@ -74,12 +89,15 @@
 
     <div id="status-board">System Ready</div>
 
+    <div id="youtube-container">
+        <div id="player"></div>
+    </div>
+
     <div id="controls">
         <div class="btn-group">
             <div class="control-btn" id="btn-walk" onclick="toggleMode('walk')">歩く</div>
             <div class="control-btn" id="btn-dance" onclick="toggleMode('dance')">サンバ</div>
         </div>
-
         <div class="btn-group">
             <div class="control-btn" id="btn-jump" 
                  ontouchstart="doJump(event)" onmousedown="doJump(event)">跳ぶ</div>
@@ -96,6 +114,8 @@
         }
     </script>
 
+    <script src="https://www.youtube.com/iframe_api"></script>
+
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -111,8 +131,6 @@
         let mixer = null;
         let sambaAction = null;
         let swingTime = 0;
-
-        // 状態管理: 'idle' | 'walk' | 'dance'
         let currentMode = 'idle';
 
         const player = { pos: new THREE.Vector3(0, 0, 0), vel: new THREE.Vector3(0, 0, 0), onGround: true };
@@ -120,34 +138,71 @@
 
         function log(msg) { document.getElementById('status-board').innerText = msg; }
 
-        // --- モード切替機能 ---
+        // --- YouTube制御 ---
+        let ytPlayer;
+        // API準備完了時に呼ばれる関数（window直下に置く必要あり）
+        window.onYouTubeIframeAPIReady = function() {
+            ytPlayer = new YT.Player('player', {
+                height: '100%', width: '100%',
+                videoId: 'cyxd78Hc2SM', // 指定の動画ID
+                playerVars: {
+                    'playsinline': 1, // スマホで全画面化防止
+                    'controls': 0,    // コントロールバー非表示
+                    'loop': 1,        // ループ設定
+                    'playlist': 'cyxd78Hc2SM' // ループにはプレイリスト指定が必要
+                },
+                events: {
+                    'onReady': (event) => log("YouTube Ready")
+                }
+            });
+        };
+
+        // 動画再生・停止関数
+        function controlVideo(play) {
+            const container = document.getElementById('youtube-container');
+            if (!ytPlayer || !ytPlayer.playVideo) return;
+
+            if (play) {
+                ytPlayer.playVideo();
+                container.classList.add('show');
+            } else {
+                ytPlayer.pauseVideo();
+                container.classList.remove('show');
+            }
+        }
+
+        // --- モード切替 ---
         window.toggleMode = (mode) => {
             const btnWalk = document.getElementById('btn-walk');
             const btnDance = document.getElementById('btn-dance');
 
-            // 同じボタンを押したら停止(idle)
             if (currentMode === mode) {
+                // 停止 (Idleへ)
                 currentMode = 'idle';
                 btnWalk.classList.remove('active-walk');
                 btnDance.classList.remove('active-dance');
-                // ダンス停止処理
                 if (sambaAction) sambaAction.stop();
-            } else {
-                // 違うモードへ切り替え
-                currentMode = mode;
                 
-                // UI更新
+                // 動画停止
+                controlVideo(false);
+                
+            } else {
+                // モード変更
+                currentMode = mode;
                 btnWalk.classList.toggle('active-walk', mode === 'walk');
                 btnDance.classList.toggle('active-dance', mode === 'dance');
 
-                // ダンス開始・停止
                 if (mode === 'dance') {
                     if (sambaAction) {
                         sambaAction.reset();
                         sambaAction.play();
                     }
+                    // 動画再生
+                    controlVideo(true);
                 } else {
                     if (sambaAction) sambaAction.stop();
+                    // 動画停止
+                    controlVideo(false);
                 }
             }
         };
@@ -235,7 +290,6 @@
                     'mixamorigLeftUpLeg': 'leftUpperLeg', 'mixamorigLeftLeg': 'leftLowerLeg', 'mixamorigLeftFoot': 'leftFoot', 
                     'mixamorigRightUpLeg': 'rightUpperLeg', 'mixamorigRightLeg': 'rightLowerLeg', 'mixamorigRightFoot': 'rightFoot'
                 };
-
                 clip.tracks.forEach((track) => {
                     const [bone, prop] = track.name.split('.');
                     const simpleBone = bone.replace('mixamorig', 'mixamorig');
@@ -251,7 +305,7 @@
                     }
                 });
                 sambaAction = mixer.clipAction(new THREE.AnimationClip('samba', clip.duration, tracks));
-                log("Ready! Tap buttons.");
+                log("Ready! Press Buttons.");
             });
         }
 
@@ -262,8 +316,6 @@
             const rArm = h.getNormalizedBoneNode('rightUpperArm');
             const lLeg = h.getNormalizedBoneNode('leftUpperLeg');
             const rLeg = h.getNormalizedBoneNode('rightUpperLeg');
-
-            // 待機ポーズ：腕を自然に下ろす(1.4)
             if(lArm) lArm.rotation.set(0, 0, 1.4);
             if(rArm) rArm.rotation.set(0, 0, -1.4);
             if(lLeg) lLeg.rotation.set(0, 0, 0);
@@ -275,15 +327,10 @@
             const delta = clock.getDelta();
 
             if (currentVrm) {
-                // --- モード別動作 ---
                 if (currentMode === 'dance') {
-                    // ダンスモード（操作なしで踊り続ける）
                     if (mixer && sambaAction) mixer.update(delta);
-                
                 } else if (currentMode === 'walk') {
-                    // 歩行モード
                     player.pos.z += config.walkSpeed * delta;
-                    
                     swingTime += delta * 10;
                     const s = Math.sin(swingTime) * 0.5;
                     const h = currentVrm.humanoid;
@@ -291,18 +338,14 @@
                     const rLeg = h.getNormalizedBoneNode('rightUpperLeg');
                     const lArm = h.getNormalizedBoneNode('leftUpperArm');
                     const rArm = h.getNormalizedBoneNode('rightUpperArm');
-                    
                     if(lLeg) lLeg.rotation.set(s, 0, 0);
                     if(rLeg) rLeg.rotation.set(-s, 0, 0);
                     if(lArm) lArm.rotation.set(s*0.5, 0, 1.4);
                     if(rArm) rArm.rotation.set(-s*0.5, 0, -1.4);
-
                 } else {
-                    // アイドルモード（待機）
                     applyStandPose();
                 }
 
-                // 物理・座標
                 player.vel.y -= config.gravity * delta;
                 player.pos.y += player.vel.y * delta;
                 if (player.pos.y <= 0) { player.pos.y = 0; player.vel.y = 0; player.onGround = true; }
@@ -310,7 +353,6 @@
                 currentVrm.scene.position.copy(player.pos);
                 currentVrm.update(delta);
 
-                // カメラ
                 const target = player.pos.clone().add(new THREE.Vector3(0, 1.4, -3.5));
                 camera.position.lerp(target, 0.1);
                 camera.lookAt(player.pos.x, player.pos.y + 1.2, player.pos.z);
